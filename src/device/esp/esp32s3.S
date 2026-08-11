@@ -90,12 +90,8 @@
 // End-of-section symbols for multi-page MMU mapping.
 .Lirom_end:
     .long _irom_end
-.Ldrom_end:
-    .long _drom_end
 .Lirom_base:
     .long 0x42000000
-.Ldrom_base:
-    .long 0x3C000000
 
 .global call_start_cpu0
 call_start_cpu0:
@@ -278,7 +274,12 @@ call_start_cpu0:
     //     Each 64KB page needs one 4-byte entry.
     //
     //     IROM: map pages 0..N where N = (_irom_end - 0x42000000) >> 16
-    //     DROM: map pages 0..M where M = (_drom_end - 0x3C000000) >> 16
+    //     DROM: map a fixed 8MB (128 pages). Bytes past the application
+    //     image are machine.Flash's data region and are read directly
+    //     through this mapping, so it must cover more than the image
+    //     itself; the esp32c3 boot code maps 128 pages for the same
+    //     reason. Entries beyond the physical flash size are never
+    //     read, because FlashDataEnd() bounds the driver.
 
     l32r a8, .Lmmu_table_base          // a8 = 0x600C5000
 
@@ -297,11 +298,7 @@ call_start_cpu0:
     blt  a9, a2, .Lirom_loop
 
     // --- DROM pages ---
-    l32r a2, .Ldrom_end                // a2 = _drom_end (VMA in 0x3Cxxxxxx)
-    l32r a3, .Ldrom_base               // a3 = 0x3C000000
-    sub  a2, a2, a3                    // a2 = byte offset past DROM base
-    srli a2, a2, 16                    // a2 = last page index
-    addi a2, a2, 1                     // a2 = number of pages to map
+    movi a2, 128                       // a2 = number of pages to map (8MB)
     movi a9, 0                         // a9 = page counter (and entry value)
     addmi a10, a8, 0x400              // a10 = 0x600C5400 (DCache entry 256)
 .Ldrom_loop:

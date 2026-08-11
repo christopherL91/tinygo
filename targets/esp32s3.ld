@@ -145,6 +145,17 @@ SECTIONS
     }
 }
 
+/* The machine.Flash data region: everything in flash past the application
+ * image (the IROM segment is last in the image), presented on the data bus.
+ * The boot code identity-maps 8MB of flash into the DROM window, so reads
+ * of this region go straight through the DCache; writes and erases go
+ * through the ROM's SPI flash routines. 4M is the smallest flash an
+ * ESP32-S3 module ships with; boards with more can still only address the
+ * first 4M through machine.Flash, matching the esp32c3 target.
+ */
+PROVIDE(__flash_data_start = ALIGN(_irom_end - 0x42000000 + 0x3C000000, 4096));
+PROVIDE(__flash_data_end = 0x3C000000 + 4M);
+
 /* For the garbage collector.
  * _heap_start must be after the DRAM shadow of the IRAM section.
  * IRAM and DRAM share the same physical SRAM1, with addresses offset by
@@ -331,6 +342,13 @@ ets_intr_lock = 0x40001b60;
 ets_intr_unlock = 0x40001b6c;
 ets_isr_attach = 0x40001b78;
 ets_isr_unmask = 0x40001b90;
+
+/* SPI flash and cache maintenance, used by machine.Flash */
+PROVIDE( esp_rom_spiflash_erase_sector = 0x400009fc );
+PROVIDE( esp_rom_spiflash_write = 0x40000a14 );
+PROVIDE( esp_rom_spiflash_read = 0x40000a20 );
+PROVIDE( esp_rom_spiflash_unlock = 0x40000a2c );
+PROVIDE( Cache_Invalidate_Addr = 0x400016b0 );
 
 
 /***************************************
