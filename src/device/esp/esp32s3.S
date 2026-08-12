@@ -18,7 +18,7 @@
 //     e. Disable caches
 //     f. Cache_MMU_Init() — reset all MMU entries to invalid
 //     g. Cache_Set_IDROM_MMU_Size() — set IROM/DROM entry split
-//     h. Write MMU entries mapping flash page 0 for IROM and DROM
+//     h. Identity-map flash pages (one shared table serves both buses)
 //     i. Clear bus-shut bits
 //     j. Enable caches + isync
 
@@ -268,44 +268,40 @@ call_start_cpu0:
     l32r a4, .LCache_Set_IDROM_MMU_Size
     callx4 a4
 
-    // 4i. Map flash pages for IROM and DROM using identity mapping.
-    //     MMU table at 0x600C5000: entries 0-255 = ICache, 256-511 = DCache.
-    //     Entry value N = flash page N (SOC_MMU_VALID = 0 on S3).
-    //     Each 64KB page needs one 4-byte entry.
+    // 4i. Map flash pages with a single identity mapping: entry N = page N.
+    //     The ESP32-S3 shares its whole 512-entry MMU table at 0x600C5000
+    //     between both buses (ESP-IDF ext_mem_defs.h: CACHE_IBUS_MMU_START/
+    //     END and CACHE_DBUS_MMU_START/END are both 0/0x800, "I/D share the
+    //     MMU linear address range"): entry N maps instruction vaddr
+    //     0x42000000+N*64K and data vaddr 0x3C000000+N*64K at once, to the
+    //     flash page the entry holds (SOC_MMU_VALID = 0 on S3). One identity
+    //     loop therefore serves code fetches and rodata reads alike.
     //
-    //     IROM: map pages 0..N where N = (_irom_end - 0x42000000) >> 16
-    //     DROM: map a fixed 8MB (128 pages). Bytes past the application
-    //     image are machine.Flash's data region and are read directly
-    //     through this mapping, so it must cover more than the image
-    //     itself; the esp32c3 boot code maps 128 pages for the same
-    //     reason. Entries beyond the physical flash size are never
-    //     read, because FlashDataEnd() bounds the driver.
+    //     Map at least 8MB (128 pages): bytes past the application image are
+    //     machine.Flash's data region and are read directly through this
+    //     mapping, so it must cover more than the image itself; the esp32c3
+    //     boot code maps 128 pages for the same reason. Entries beyond the
+    //     physical flash size are never read, because FlashDataEnd() bounds
+    //     the driver.
 
     l32r a8, .Lmmu_table_base          // a8 = 0x600C5000
 
-    // --- IROM pages ---
     l32r a2, .Lirom_end                // a2 = _irom_end (VMA in 0x42xxxxxx)
     l32r a3, .Lirom_base               // a3 = 0x42000000
     sub  a2, a2, a3                    // a2 = byte offset past IROM base
     srli a2, a2, 16                    // a2 = last page index
-    addi a2, a2, 1                     // a2 = number of pages to map
+    addi a2, a2, 1                     // a2 = number of image pages
+    movi a3, 128                       // at least 8MB for machine.Flash data
+    bge  a2, a3, .Lmap_loop_init       // a2 = max(image pages, 128)
+    mov  a2, a3
+.Lmap_loop_init:
     movi a9, 0                         // a9 = page counter (and entry value)
     mov  a10, a8                       // a10 = current MMU entry pointer
-.Lirom_loop:
+.Lmap_loop:
     s32i a9, a10, 0
     addi a9, a9, 1
     addi a10, a10, 4
-    blt  a9, a2, .Lirom_loop
-
-    // --- DROM pages ---
-    movi a2, 128                       // a2 = number of pages to map (8MB)
-    movi a9, 0                         // a9 = page counter (and entry value)
-    addmi a10, a8, 0x400              // a10 = 0x600C5400 (DCache entry 256)
-.Ldrom_loop:
-    s32i a9, a10, 0
-    addi a9, a9, 1
-    addi a10, a10, 4
-    blt  a9, a2, .Ldrom_loop
+    blt  a9, a2, .Lmap_loop
     memw
 
     // 4j. Clear bus-shut bits so core 0 can access ICache and DCache buses.
