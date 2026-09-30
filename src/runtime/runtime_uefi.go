@@ -26,6 +26,11 @@ func ticks() timeUnit {
 	return timeUnit(uefi.Ticks())
 }
 
+// The TSC counts from power-on at several GHz, so both conversions keep whole
+// seconds apart from the remainder: ticks*1e9 overflows an int64 within
+// seconds of power-on, and seconds*frequency does for the far-off deadline
+// of a timer that is never meant to fire.
+
 func nanosecondsToTicks(ns int64) timeUnit {
 	frequency := int64(uefi.TicksFrequency())
 	if frequency == 0 {
@@ -33,15 +38,20 @@ func nanosecondsToTicks(ns int64) timeUnit {
 	}
 	seconds := ns / 1000000000
 	remainder := ns % 1000000000
+	if seconds > (1<<63-1)/frequency-1 {
+		return 1<<63 - 1
+	}
 	return timeUnit(seconds*frequency + (remainder*frequency)/1000000000)
 }
 
 func ticksToNanoseconds(t timeUnit) int64 {
-	frequency := int64(uefi.TicksFrequency())
+	frequency := uint64(uefi.TicksFrequency())
 	if frequency == 0 {
 		return int64(t)
 	}
-	return int64(t) * 1000000000 / frequency
+	seconds := uint64(t) / frequency
+	remainder := uint64(t) % frequency
+	return int64(seconds*1000000000 + remainder*1000000000/frequency)
 }
 
 func sleepTicks(d timeUnit) {
